@@ -116,6 +116,38 @@ const PopupContentDisplay = ({ feature, layout, layer }: PopupContentDisplayProp
     };
 
     const createLink = (value: string, field: string) => {
+        // Check if we have a special 'custom' key in linkFields
+        if (linkFields?.['custom']) {
+            const customLinks = linkFields['custom'];
+
+            if (field === 'custom' && customLinks.transform) {
+                const hrefs = customLinks.transform(value);
+
+                return (
+                    <>
+                        {hrefs.map((item, index) => {
+                            if (item.href === null) {
+                                return null;
+                            }
+
+                            return (
+                                <div key={`${item.href}-${index}`} className="flex gap-2">
+                                    <Link
+                                        to={item.href}
+                                        className="p-0 h-auto whitespace-normal text-left font-normal inline-flex items-center max-w-full gap-1"
+                                        variant='primary'
+                                    >
+                                        <span className="break-all inline-block">{item.label}</span>
+                                        <ExternalLink className="flex-shrink-0 ml-1" size={16} />
+                                    </Link>
+                                </div>
+                            )
+                        })}
+                    </>
+                );
+            }
+        }
+
         const linkConfig = linkFields?.[field];
 
         if (linkConfig) {
@@ -168,32 +200,55 @@ const PopupContentDisplay = ({ feature, layout, layer }: PopupContentDisplayProp
         value: string | number;
     }
 
-    const getRelatedTableValues = () => {
-        if (!data?.length) return [[{ label: "No data available", value: "No data available" }]];
+    const getRelatedTableValues = (groupedLayerIndex: number) => {
+        if (!data?.length) {
+            return [[{ label: "", value: "No data available" }]];
+        }
 
         const groupedValues: LabelValuePair[][] = [];
-        relatedTables?.forEach((table) => {
-            const targetField = properties[table.targetField];
 
-            data.forEach((entry) => {
-                entry?.forEach((item: Record<string, any>) => {
-                    if (item[table.matchingField] === targetField && item.labelValuePairs) {
-                        // Each item's labelValuePairs becomes its own group
-                        groupedValues.push([...item.labelValuePairs]);
-                    }
-                });
+        // Check if the provided groupedLayerIndex is valid
+        const table = relatedTables?.[groupedLayerIndex];
+        if (!table) {
+            return [[{ label: "Invalid index", value: "Invalid index" }]];
+        }
+
+        // Get the target value for matching for the specific table
+        const targetField = properties[table.targetField];
+
+        // Process the related table for the provided groupedLayerIndex
+        if (data[groupedLayerIndex]) {
+            // Create a new group for this table's matches
+            const tableMatches: LabelValuePair[] = [];
+
+            data[groupedLayerIndex].forEach((item) => {
+                // Convert both to strings before comparing
+                if (String(item[table.matchingField]) === String(targetField) && item.labelValuePairs) {
+                    // Add these pairs to this table's matches
+                    tableMatches.push(...item.labelValuePairs);
+                }
             });
-        });
+
+            // Only add non-empty matches to the grouped values
+            if (tableMatches.length > 0) {
+                groupedValues.push(tableMatches);
+            }
+        }
 
         return groupedValues.length
             ? groupedValues
-            : [[{ label: "No data available", value: "No data available" }]];
+            : [[{ label: "", value: "No data available" }]];
     };
 
+
     const baseFeatureEntries = popupFields ? Object.entries(popupFields) : Object.entries(properties);
+
+    // Add custom field entry if we have custom links
+    const customFieldEntries = linkFields?.['custom'] ? [['', { field: 'custom', type: 'string' }]] : [];
+
     const featureEntries = rasterValue !== null
-        ? [...baseFeatureEntries, [`${rasterSource?.valueLabel}`, rasterValue]]
-        : baseFeatureEntries;
+        ? [...baseFeatureEntries, ...customFieldEntries, [`${rasterSource?.valueLabel}`, rasterValue]]
+        : [...baseFeatureEntries, ...customFieldEntries];
 
     const shouldDisplayValue = (value: string): boolean => {
         // Cases where we don't want to display the value:
@@ -211,6 +266,20 @@ const PopupContentDisplay = ({ feature, layout, layer }: PopupContentDisplayProp
         regularContent: JSX.Element[];
     }>(
         (acc, [label, field]) => {
+            // Handle special case for custom links
+            if (field && typeof field === 'object' && field.field === 'custom') {
+                const content = (
+                    <div key={label} className="flex flex-col">
+                        <p className="font-bold underline text-primary">{label}</p>
+                        <div className="break-words">
+                            {popupFields ? (field.transform ? field.transform(properties) : '') : createLink('', 'custom')}
+                        </div>
+                    </div>
+                );
+                acc.urlContent.push(content);
+                return acc;
+            }
+
             const fieldConfig = popupFields ? field : { field, type: 'string' as const };
 
             // Special handling for raster value
@@ -254,7 +323,8 @@ const PopupContentDisplay = ({ feature, layout, layer }: PopupContentDisplayProp
 
     type ContentProps = { longRelatedContent: JSX.Element[]; regularRelatedContent: JSX.Element[] };
     const { longRelatedContent, regularRelatedContent } = (relatedTables || []).reduce<ContentProps>((acc, table, index) => {
-        const groupedValues = getRelatedTableValues();
+
+        const groupedValues = getRelatedTableValues(index);
 
         const content = (
             <div key={index} className="flex flex-col space-y-2">
